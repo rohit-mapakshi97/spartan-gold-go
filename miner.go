@@ -17,7 +17,7 @@ func NewMiner(options map[string]interface{}) *Miner {
 	m.address = k.address
 	m.publicKey = k.publicKey
 	m.privateKey = k.privateKey
-	m.miningRounds = NUM_ROUNDS
+	m.miningRounds = NUM_ROUNDS_MINING
 
 	return m
 }
