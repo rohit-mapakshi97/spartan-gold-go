@@ -7,10 +7,17 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 )
+
+/**
+ * A transaction comes from a single account, specified by "address". For
+ * each account, transactions have an order established by the nonce. A
+ * transaction should not be accepted if the nonce has already been used.
+ * (Nonces are in increasing order, so it is easy to determine when a nonce
+ * has been used.)
+ */
 
 type Output struct {
 	Address string
@@ -31,14 +38,14 @@ type Transaction struct {
 	Sig  []byte
 }
 
-func NewTransaction(from string, nonce uint32, pubkey *rsa.PublicKey, sig []byte, fee uint32, outputs []Output, data []byte) (*Transaction, error) {
+func NewTransaction(from string, nonce uint32, pubkey *rsa.PublicKey, sig []byte, fee uint32, outputs []Output, data []byte) *Transaction {
 	var tx Transaction
 	tx.Info.From = from
 	tx.Info.Nonce = nonce
 	tx.Info.Pubkey = *pubkey
 	tx.Info.Fee = fee
 	if len(outputs) == 0 {
-		return nil, errors.New("outputs is empty")
+		panic("outputs is empty")
 	}
 	tx.Info.Outputs = make([]Output, len(outputs))
 	copy(tx.Info.Outputs, outputs)
@@ -47,39 +54,72 @@ func NewTransaction(from string, nonce uint32, pubkey *rsa.PublicKey, sig []byte
 
 	tx.Sig = make([]byte, len(sig))
 	copy(tx.Sig, sig)
-	return &tx, nil
+	return &tx
 }
 
-func TransactionToBytes(tx *Transaction) ([]byte, error) {
+/**
+ * A transaction's ID is derived from its contents.
+ */
+func (tx *Transaction) Id() string {
+	return tx.GetHashStr()
+}
+
+/**
+ * Signs a transaction and stores the signature in the transaction.
+ */
+func (tx *Transaction) Sign(privKey *rsa.PrivateKey) []byte {
+	rng := rand.Reader
+	hashed := (&(*tx).Info).GetHash()
+	signature, err := rsa.SignPKCS1v15(rng, privKey, crypto.SHA256, hashed)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error from signing: %s\n", err)
+		return nil
+	}
+	tx.Sig = make([]byte, len(signature))
+	copy(tx.Sig, signature)
+	return signature
+}
+
+/**
+ * Verifies that there is currently sufficient gold for the transaction.
+ */
+
+func (tx *Transaction) ValidSignature() bool {
+	hashed := (&(*tx).Info).GetHash()
+	err := rsa.VerifyPKCS1v15(&tx.Info.Pubkey, crypto.SHA256, hashed[:], (*tx).Sig)
+	return err == nil
+}
+
+func TransactionToBytes(tx *Transaction) []byte {
 	data, err := json.Marshal(tx)
 	if err != nil {
-		return nil, err
+		return nil
 	}
-	return data, nil
+	return data
 }
 
-func BytesToTransaction(data []byte) (*Transaction, error) {
+func BytesToTransaction(data []byte) *Transaction {
 	var tx Transaction
 	if err := json.Unmarshal(data, &tx); err != nil {
-		return nil, err
+		return nil
 	}
-	return &tx, nil
+	return &tx
 }
 
-func TransactionInfoToBytes(tx *TransactionInfo) ([]byte, error) {
+func TransactionInfoToBytes(tx *TransactionInfo) []byte {
 	data, err := json.Marshal(tx)
 	if err != nil {
-		return nil, err
+		return nil
 	}
-	return data, nil
+	return data
 }
 
-func BytesToTransactionInfo(data []byte) (*TransactionInfo, error) {
+func BytesToTransactionInfo(data []byte) *TransactionInfo {
 	var txInfo TransactionInfo
 	if err := json.Unmarshal(data, &txInfo); err != nil {
-		return nil, err
+		return nil
 	}
-	return &txInfo, nil
+	return &txInfo
 }
 
 func (tran *Transaction) ToString() string {
@@ -102,41 +142,15 @@ func (tran *Transaction) ToString() string {
 }
 
 func (txInfo *TransactionInfo) GetHash() []byte {
-	data, err := TransactionInfoToBytes(txInfo)
-	if err != nil {
-		return nil
-	}
+	data := TransactionInfoToBytes(txInfo)
 	tx_hash := sha256.Sum256(data)
 	return tx_hash[:]
 }
 
 func (tx *Transaction) GetHashStr() string {
-	data, _ := TransactionToBytes(tx)
+	data := TransactionToBytes(tx)
 	hashed := sha256.Sum256(data)
 	return hex.EncodeToString(hashed[:])
-}
-
-func (tx *Transaction) Id() string {
-	return tx.GetHashStr()
-}
-
-func (tx *Transaction) Sign(privKey *rsa.PrivateKey) []byte {
-	rng := rand.Reader
-	hashed := (&(*tx).Info).GetHash()
-	signature, err := rsa.SignPKCS1v15(rng, privKey, crypto.SHA256, hashed)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error from signing: %s\n", err)
-		return nil
-	}
-	tx.Sig = make([]byte, len(signature))
-	copy(tx.Sig, signature)
-	return signature
-}
-
-func (tx *Transaction) VerifySignature() bool {
-	hashed := (&(*tx).Info).GetHash()
-	err := rsa.VerifyPKCS1v15(&tx.Info.Pubkey, crypto.SHA256, hashed[:], (*tx).Sig)
-	return err == nil
 }
 
 func (tx *Transaction) TotalOutput() uint32 {

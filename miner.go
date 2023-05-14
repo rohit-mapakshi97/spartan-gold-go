@@ -10,9 +10,11 @@ import (
 	"github.com/chuckpreslar/emission"
 )
 
-// Miners are clients, but they also mine blocks looking for "proofs".
+/**
+ * Miners are clients, but they also mine blocks looking for "proofs".
+ */
 type Miner struct {
-	// The variables that are same as Client
+	//TODO add inheritance
 	Name                        string
 	Address                     string
 	PrivKey                     *rsa.PrivateKey
@@ -24,27 +26,25 @@ type Miner struct {
 	LastBlock                   *Block
 	LastConfirmedBlock          *Block
 	ReceivedBlock               *Block
-	Config                      BlockchainConfig
 	Nonce                       uint32
 	Net                         *FakeNet
 	Emitter                     *emission.Emitter
 	mu                          sync.Mutex
 
-	// Miner's specific variables
 	CurrentBlock *Block
 	MiningRounds uint32
 	Transactions *utils.Set[*Transaction]
 }
 
-func NewMiner(name string, Net *FakeNet, miningRounds uint32, startingBlock *Block, config BlockchainConfig) *Miner {
+func NewMiner(name string, Net *FakeNet, miningRounds uint32, startingBlock *Block /*, config BlockchainConfig*/) *Miner {
 	var m Miner
 	m.Net = Net
 	m.Name = name
-	m.PrivKey, m.PubKey, _ = utils.GenerateKeypair()
+	m.PrivKey, m.PubKey = utils.GenerateKeypair()
 
-	m.Address = utils.GenerateAddress(m.PubKey)
+	m.Address = utils.CalcAddress(m.PubKey)
 	m.Nonce = 0
-	m.Config = config
+
 	m.PendingOutgoingTransactions = make(map[string]*Transaction)
 	m.PendingReceivedTransactions = make(map[string]*Transaction)
 	m.Blocks = make(map[string]*Block)
@@ -71,11 +71,13 @@ func (m *Miner) SetGenesisBlock(startingBlock *Block) {
 	}
 	(*m).LastConfirmedBlock = startingBlock
 	(*m).LastBlock = startingBlock
-	blockId, _ := startingBlock.GetHash()
+	blockId := startingBlock.GetHash()
 	(*m).Blocks[blockId] = startingBlock
 }
 
-// Starts listeners and begins mining
+/**
+ * Starts listeners and begins mining.
+ */
 func (m *Miner) Initialize() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -88,13 +90,16 @@ func (m *Miner) Initialize() {
 	go (*m).Emitter.Emit(START_MINING, false)
 }
 
+/**
+ * Sets up the miner to start searching for a new block.
+ */
 func (m *Miner) StartNewSearch(txSet *utils.Set[*Transaction]) {
+	target := utils.CalcTarget(POW_LEADING_ZEROES, POW_BASE_TARGET_STR)
+	(*m).CurrentBlock = NewBlock((*m).Address, (*m).LastBlock, target, COINBASE_AMT_ALLOWED)
 
-	//TODO assign currentBlock
-	target := utils.CalculateTarget(POW_LEADING_ZEROES, POW_BASE_TARGET_STR)
-	(*m).CurrentBlock = NewBlock((*m).Address, (*m).LastBlock, target, (*m).Config.coinbaseAmount)
-	//Blockchain.makeBlock(m.address, m.lastBlock)
-
+	// Merging txSet into the transaction queue.
+	// These transactions may include transactions not already included
+	// by a recently received block, but that the miner is aware of.
 	if txSet == nil {
 		txSet = utils.NewSet[*Transaction]()
 	}
@@ -111,11 +116,12 @@ func (m *Miner) StartNewSearch(txSet *utils.Set[*Transaction]) {
 	}
 	(*m).Transactions.Clear()
 
+	// Start looking for a proof at 0.
 	(*m).CurrentBlock.Proof = 0
 
 }
 
-// Looks for a "proof".
+// Looks for a "proof".  It breaks after some time to listen for messages.
 func (m *Miner) FindProof(oneAndDone bool) {
 
 	(*m).mu.Lock()
@@ -125,58 +131,58 @@ func (m *Miner) FindProof(oneAndDone bool) {
 
 	for (*m).CurrentBlock.Proof < pausePoint {
 		if (*m).CurrentBlock.hasValidProof() {
-			m.Log(fmt.Sprintf("found proof for block %d: %d", (*m).CurrentBlock.ChainLength, (*m).CurrentBlock.Proof))
+			m.Print(fmt.Sprintf("found proof for block %d: %d", (*m).CurrentBlock.ChainLength, (*m).CurrentBlock.Proof))
 			m.AnnounceProof()
+			// Note: calling receiveBlock triggers a new search.
 			go m.ReceiveBlock(*(*m).CurrentBlock)
 			break
 		}
 		(*m).CurrentBlock.Proof++
 	}
 
-	// If we are testing, don't continue the search
-	// TODO
+	// If we are testing, don't continue the search.
 	if !oneAndDone {
+		// Check if anyone has found a block, and then return to mining.
 		go (*m).Emitter.Emit(START_MINING, false)
 	}
 }
 
-// Broadcast the block, with a valid proof included
+/**
+ * Broadcast the block, with a valid proof included.
+ */
 func (m *Miner) AnnounceProof() {
 
-	data, err := BlockToBytes((*m).CurrentBlock)
-	if err != nil {
-		fmt.Println("AnnounceProof() Marshal Panic:")
-		panic(err)
-	}
+	data := BlockToBytes((*m).CurrentBlock)
 	(*m).Net.Broadcast(PROOF_FOUND, data)
 }
 
-// Validates and adds a block to the list of blocks, possibly
-// updating the head of the blockchain.
+/**
+ * Receives a block from another miner. If it is valid,
+ * the block will be stored. If it is also a longer chain,
+ * the miner will accept it and replace the currentBlock.*/
+
 func (m *Miner) ReceiveBlock(b Block) *Block {
 	(*m).mu.Lock()
 	defer (*m).mu.Unlock()
 
 	block := &b
-	blockId, _ := block.GetHash()
+	blockId := block.GetHash()
 
 	if _, received := (*m).Blocks[blockId]; received {
 		return nil
 	}
 
 	if !block.hasValidProof() && !block.IsGenesisBlock() {
-		m.Log(fmt.Sprintf("Block %v does not have a valid proof\n", blockId))
+		m.Print(fmt.Sprintf("Block %v does not have a valid proof\n", blockId))
 		return nil
 	}
 
-	//var prevBlock *Block = nil
 	prevBlock, received := (*m).Blocks[(*block).PrevBlockHash]
 	if !received && !block.IsGenesisBlock() {
 
 		stuckBlocks, received := (*m).PendingBlocks[(*block).PrevBlockHash]
 		if !received {
 			m.RequestMissingBlock(block)
-			// TODO: Define a set
 			stuckBlocks = utils.NewSet[*Block]()
 		}
 		stuckBlocks.Add(block)
@@ -191,7 +197,7 @@ func (m *Miner) ReceiveBlock(b Block) *Block {
 		}
 	}
 
-	blockId, _ = block.GetHash()
+	blockId = block.GetHash()
 	(*m).Blocks[blockId] = block
 
 	if (*(*m).LastBlock).ChainLength < (*block).ChainLength {
@@ -208,14 +214,13 @@ func (m *Miner) ReceiveBlock(b Block) *Block {
 	delete((*m).PendingBlocks, blockId)
 
 	for _, uBlock := range unstuckBlocksArr {
-		m.Log(fmt.Sprintf("processing unstuck block %v", uBlock.GetHashStr()))
-		// Need to change the "" into empty []byte
+		m.Print(fmt.Sprintf("processing unstuck block %v", uBlock.GetHashStr()))
 		go m.ReceiveBlock(*uBlock)
 	}
-	m.Log(fmt.Sprintf("block %s received", block.GetHashStr()))
+	m.Print(fmt.Sprintf("block %s received", block.GetHashStr()))
 
 	if (*m).CurrentBlock != nil && (*block).ChainLength >= (*m).CurrentBlock.ChainLength {
-		m.Log("Cutting over to new chain")
+		m.Print("Cutting over to new chain")
 		txSet := m.SyncTransaction(block)
 		m.StartNewSearch(txSet)
 	}
@@ -225,15 +230,16 @@ func (m *Miner) ReceiveBlock(b Block) *Block {
 
 func (m *Miner) ReceiveBlockBytes(bs []byte) *Block {
 
-	block, err := BytesToBlock(bs)
-	if err != nil {
-		panic("Failed to deseralize block")
-	}
-
+	block := BytesToBlock(bs)
 	return m.ReceiveBlock(*block)
 }
 
-// This function should determine what transactions need to be added or deleted.
+/**
+ * This function should determine what transactions
+ * need to be added or deleted.  It should find a common ancestor (retrieving
+ * any transactions from the rolled-back blocks), remove any transactions
+ * already included in the newly accepted blocks, and add any remaining
+ * transactions to the new block.*/
 func (m *Miner) SyncTransaction(newBlock *Block) *utils.Set[*Transaction] {
 
 	cb := (*m).CurrentBlock
@@ -247,8 +253,8 @@ func (m *Miner) SyncTransaction(newBlock *Block) *utils.Set[*Transaction] {
 		newBlock = (*m).Blocks[newBlock.PrevBlockHash]
 	}
 
-	currentBlockId, _ := cb.GetHash()
-	newBlockId, _ := newBlock.GetHash()
+	currentBlockId := cb.GetHash()
+	newBlockId := newBlock.GetHash()
 	for currentBlockId != newBlockId {
 		for _, transaction := range cb.Transactions {
 			cbTxs.Add(&transaction.Tx)
@@ -260,8 +266,8 @@ func (m *Miner) SyncTransaction(newBlock *Block) *utils.Set[*Transaction] {
 		cb = (*m).Blocks[cb.PrevBlockHash]
 
 		if cb != nil {
-			currentBlockId, _ = cb.GetHash()
-			newBlockId, _ = newBlock.GetHash()
+			currentBlockId = cb.GetHash()
+			newBlockId = newBlock.GetHash()
 		} else {
 			break
 		}
@@ -275,8 +281,9 @@ func (m *Miner) SyncTransaction(newBlock *Block) *utils.Set[*Transaction] {
 	return cbTxs
 }
 
-// Returns false if transaction is not accepted.Otherwise add the
-// transaction to the current block.
+/**
+ * Returns false if transaction is not accepted. Otherwise stores
+ * the transaction to be added to the next block.*/
 func (m *Miner) AddTransaction(tx *Transaction) {
 	(*m).mu.Lock()
 	defer (*m).mu.Unlock()
@@ -285,10 +292,7 @@ func (m *Miner) AddTransaction(tx *Transaction) {
 
 func (m *Miner) AddTransactionBytes(data []byte) {
 
-	tx, err := BytesToTransaction(data)
-	if err != nil {
-		panic("Failed to deserialize data")
-	}
+	tx := BytesToTransaction(data)
 	m.AddTransaction(tx)
 }
 
@@ -319,12 +323,12 @@ func (m *Miner) PostTransaction(outputs []Output, fee uint32) {
 		panic(`Account doesn't have enough balance for transaction`)
 	}
 	// add data to the constructor
-	tx, _ := NewTransaction((*m).Address, (*m).Nonce, (*m).PubKey, nil, fee, outputs, nil)
+	tx := NewTransaction((*m).Address, (*m).Nonce, (*m).PubKey, nil, fee, outputs, nil)
 
 	tx.Sign((*m).PrivKey)
 	(*m).PendingOutgoingTransactions[tx.Id()] = tx
 	(*m).Nonce++
-	data, _ := TransactionToBytes(tx)
+	data := TransactionToBytes(tx)
 	(*m).Net.Broadcast(POST_TRANSACTION, data)
 	(*m).mu.Unlock()
 
@@ -334,7 +338,7 @@ func (m *Miner) PostTransaction(outputs []Output, fee uint32) {
 // Request the previous block from the network.
 // convert []byte into string
 func (m *Miner) RequestMissingBlock(block *Block) {
-	m.Log(fmt.Sprintf("Asking for missing block: %v", block.PrevBlockHash))
+	m.Print(fmt.Sprintf("Asking for missing block: %v", block.PrevBlockHash))
 	var msg = Message{(*m).Address, (*block).PrevBlockHash}
 	jsonByte, err := json.Marshal(msg)
 	if err != nil {
@@ -356,8 +360,8 @@ func (m *Miner) ProvideMissingBlock(data []byte) {
 		panic(err)
 	}
 	if val, received := (*m).Blocks[msg.PrevBlockHash]; received {
-		m.Log(fmt.Sprintf("Providing missing block %v", val.GetHashStr()))
-		data, err := BlockToBytes(val)
+		m.Print(fmt.Sprintf("Providing missing block %v", val.GetHashStr()))
+		data := BlockToBytes(val)
 		if err != nil {
 			fmt.Println("ProvideMissingBlock() Marshal Panic:")
 			panic(err)
@@ -416,14 +420,14 @@ func (m *Miner) ShowBlockchain() {
 	block := (*m).LastBlock
 	fmt.Println("BLOCKCHAIN:")
 	for block != nil {
-		blockId, _ := block.GetHash()
+		blockId := block.GetHash()
 		fmt.Println(blockId)
 		block = (*m).Blocks[(*block).PrevBlockHash]
 	}
 }
 
 // Logs messages to stdout
-func (m *Miner) Log(msg string) {
+func (m *Miner) Print(msg string) {
 	name := (*m).Address[0:10]
 	if len((*m).Name) > 0 {
 		name = (*m).Name

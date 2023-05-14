@@ -76,103 +76,69 @@ func NewBlock(rewardAddr string, prevBlock *Block, target *big.Int, coinbaseRewa
 	block.Proof = 0
 
 	if prevBlock != nil {
-		hashHexStr, err := prevBlock.GetHash()
-		if err != nil {
-			fmt.Println(err.Error())
-			return nil
-		} else {
-			block.PrevBlockHash = hashHexStr
-		}
+		hashHexStr := prevBlock.GetHash()
+		block.PrevBlockHash = hashHexStr
 	}
 
-	// copy Balances from previous block
+	// Get the balances and nonces from the previous block, if available.
 	block.Balances = make([]BalanceType, 0)
 	if prevBlock != nil && (*prevBlock).Balances != nil {
 		block.Balances = append(block.Balances, (*prevBlock).Balances...)
 	}
 
-	// copy NextNounce from previous block
 	block.NextNonce = make([]NextNonceType, 0)
 	if prevBlock != nil && (*prevBlock).NextNonce != nil {
 		block.NextNonce = append(block.NextNonce, (*prevBlock).NextNonce...)
 	}
 
+	// Storing transactions
 	block.Transactions = make([]TransactionType, 0)
 
+	// Used to determine the winner between competing chains.
+	// Note that this is a little simplistic -- an attacker
+	// could make a long, but low-work chain.  However, this works
+	// well enough for us.
 	block.ChainLength = 0
 	if prevBlock != nil {
 		block.ChainLength = (*prevBlock).ChainLength + 1
 	}
 
 	block.Timestamp = time.Now()
+
+	// The address that will gain both the coinbase reward and transaction fees,
+	// assuming that the block is accepted by the network.
 	block.RewardAddr = rewardAddr
 	block.CoinbaseReward = coinbaseReward
 	return &block
 }
 
-func (block *Block) ToString() string {
-	var blockStr string
-
-	blockStr = fmt.Sprintf("PrevBlockHash: %s\n", (*block).PrevBlockHash)
-	blockStr = blockStr + fmt.Sprintf("Target: %x\n", &(*block).Target)
-	blockStr = blockStr + fmt.Sprintf("Proof: %d\n", (*block).Proof)
-	blockStr = blockStr + fmt.Sprintf("ChainLength: %d\n", (*block).ChainLength)
-	blockStr = blockStr + fmt.Sprintf("Timestamp: %s\n", (*block).Timestamp.GoString())
-	blockStr = blockStr + fmt.Sprintf("RewardAddr: %s\n", (*block).RewardAddr)
-	blockStr = blockStr + fmt.Sprintf("CoinbaseReward: %d\n", (*block).CoinbaseReward)
-
-	balanceStr := "Balancecs: [\n"
-	for _, v := range (*block).Balances {
-		balanceStr = balanceStr + fmt.Sprintf("\t%s: %d\n", v.Id, v.Balance)
-	}
-	balanceStr = balanceStr + "]\n"
-
-	nextNonceStr := "nextNonceStr: [\n"
-	for _, v := range (*block).NextNonce {
-		nextNonceStr = nextNonceStr + fmt.Sprintf("\t%s: %d\n", v.Id, v.Nonce)
-	}
-	nextNonceStr = nextNonceStr + "]\n"
-
-	transactionStr := "Transactions: [\n"
-	for _, v := range (*block).Transactions {
-		transactionStr = transactionStr + fmt.Sprintf("\t%s\n", v.Id)
-	}
-	transactionStr = transactionStr + "]\n"
-
-	blockStr = blockStr + balanceStr + nextNonceStr + transactionStr
-
-	return blockStr
-}
-
-func BlockToBytes(block *Block) ([]byte, error) {
+func BlockToBytes(block *Block) []byte {
 	data, err := json.Marshal(block)
 	if err != nil {
-		return nil, err
+		return nil
 	}
-	return data, nil
+	return data
 }
 
-func BytesToBlock(data []byte) (*Block, error) {
+func BytesToBlock(data []byte) *Block {
 	var block Block
 	if err := json.Unmarshal(data, &block); err != nil {
-		return nil, err
+		return nil
 	}
-	return &block, nil
+	return &block
 }
 
-func (block *Block) GetHash() (string, error) {
+func (block *Block) GetHash() string {
 	block4hash := *block
 	block4hash.Balances = nil
 	block4hash.NextNonce = nil
 
-	blockData, err := BlockToBytes(&block4hash)
+	blockData := BlockToBytes(&block4hash)
 	var blockHash [32]byte
-	if err == nil {
-		blockHash = sha256.Sum256(blockData)
-		return hex.EncodeToString(blockHash[:]), nil
-	} else {
-		return "", err
-	}
+
+	blockHash = sha256.Sum256(blockData)
+	return hex.EncodeToString(blockHash[:])
+
 }
 
 func (block *Block) GetHashStr() string {
@@ -180,14 +146,12 @@ func (block *Block) GetHashStr() string {
 	block4hash.Balances = nil
 	block4hash.NextNonce = nil
 
-	blockData, err := BlockToBytes(&block4hash)
+	blockData := BlockToBytes(&block4hash)
 	var blockHash [32]byte
-	if err == nil {
-		blockHash = sha256.Sum256(blockData)
-		return hex.EncodeToString(blockHash[:])
-	} else {
-		return ""
-	}
+
+	blockHash = sha256.Sum256(blockData)
+	return hex.EncodeToString(blockHash[:])
+
 }
 
 func (block *Block) IsGenesisBlock() bool {
@@ -198,11 +162,7 @@ func (block *Block) hasValidProof() bool {
 	block4hash := *block
 	block4hash.Balances = nil
 	block4hash.NextNonce = nil
-	data, err := BlockToBytes(&block4hash)
-	if err != nil {
-		fmt.Printf("Failed to convert Block to Byte array")
-		return false
-	}
+	data := BlockToBytes(&block4hash)
 	block_hash := sha256.Sum256(data)
 	block_value := big.NewInt(0)
 	block_value.SetBytes(block_hash[:])
@@ -217,10 +177,10 @@ func (block *Block) AddTransaction(tx *Transaction) bool {
 	} else if (*tx).Sig == nil {
 		fmt.Printf("Unsigned transaction %s", tx.Id())
 		return false
-	} else if !tx.VerifySignature() {
+	} else if !tx.ValidSignature() {
 		fmt.Printf("Invalid signature for transaction %s", tx.Id())
 		return false
-	} else if !block.SufficientFund(tx) {
+	} else if !block.HasSufficientFund(tx) {
 		fmt.Printf("Insufficient fund for transaction %s", tx.Id())
 		return false
 	}
@@ -271,7 +231,7 @@ func (block *Block) Rerun(prevBlock *Block) bool {
 		return false
 	}
 
-	// copy Balances from previous block
+	// Setting balances to the previous block's balances.
 	block.Balances = make([]BalanceType, 0)
 	if prevBlock != nil && (*prevBlock).Balances != nil {
 		block.Balances = append(block.Balances, (*prevBlock).Balances...)
@@ -283,7 +243,7 @@ func (block *Block) Rerun(prevBlock *Block) bool {
 		block.NextNonce = append(block.NextNonce, (*prevBlock).NextNonce...)
 	}
 
-	// Adding coinbase reward for previous block
+	// Adding coinbase reward for prevBlock.
 	if (*prevBlock).RewardAddr != "" {
 		var winnerBalance uint32 = (*prevBlock).BalanceOf((*prevBlock).RewardAddr)
 		index := block.FindBalanceIndex((*prevBlock).RewardAddr)
@@ -308,6 +268,7 @@ func (block *Block) Rerun(prevBlock *Block) bool {
 	return true
 }
 
+// Gets the available gold of a user identified by an address.
 func (block *Block) BalanceOf(address string) uint32 {
 	index := block.FindBalanceIndex(address)
 	if index > -1 {
@@ -317,11 +278,16 @@ func (block *Block) BalanceOf(address string) uint32 {
 	}
 }
 
-func (block *Block) SufficientFund(tx *Transaction) bool {
+func (block *Block) HasSufficientFund(tx *Transaction) bool {
 	var totalOutput uint32 = (*tx).TotalOutput()
 	return totalOutput <= (*block).BalanceOf(tx.Info.From)
 }
 
+/**
+ * The total amount of gold paid to the miner who produced this block,
+ * if the block is accepted.  This includes both the coinbase transaction
+ * and any transaction fees.
+ */
 func (block *Block) TotalRewards() uint32 {
 	var total uint32 = 0
 	for _, v := range (*block).Transactions {
@@ -331,6 +297,10 @@ func (block *Block) TotalRewards() uint32 {
 	return total
 }
 
+/**
+ * Determines whether a transaction is in the block.  Note that only the
+ * block itself is checked; if it returns false, the transaction might
+ * still be included in one of its ancestor blocks.*/
 func (block *Block) Contains(tx *Transaction) bool {
 	index := block.FindTransactionIndex(tx.Id())
 	return index > -1

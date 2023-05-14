@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"spartangold/utils"
 )
 
@@ -27,33 +26,19 @@ const DEFAULT_TX_FEE uint32 = 1
 // Note that the genesis block is always considered to be confirmed.
 const CONFIRMED_DEPTH uint32 = 6
 
-type BlockchainConfig struct {
-	coinbaseAmount uint32
-	defaultTxFee   uint32
-	confirmedDepth uint32
-}
-
-func MakeGenesisDefault(startingBalances map[string]uint32) (*Block, BlockchainConfig, error) {
-	return MakeGenesis(POW_LEADING_ZEROES, COINBASE_AMT_ALLOWED, DEFAULT_TX_FEE, CONFIRMED_DEPTH, startingBalances)
-}
-
-func MakeGenesis(leading_zeros uint32, coinbase_amt uint32, tx_fee uint32, confirmed_depth uint32, starting_balances map[string]uint32) (*Block, BlockchainConfig, error) {
-	var newconfig BlockchainConfig
-	newconfig.coinbaseAmount = coinbase_amt
-	newconfig.confirmedDepth = confirmed_depth
-	newconfig.defaultTxFee = tx_fee
-
+// Produces a new genesis block, giving the specified client balances
+func MakeGenesisDefault(starting_balances map[string]uint32) *Block {
 	if starting_balances == nil {
-		return nil, newconfig, errors.New("makeGenesis(...): starting_balances cannot be nil")
+		panic("makeGenesis(...): starting_balances cannot be nil")
 	}
 
-	target := utils.CalculateTarget(leading_zeros, POW_BASE_TARGET_STR)
-	newblock := NewBlock("", nil, target, coinbase_amt)
+	target := utils.CalcTarget(POW_LEADING_ZEROES, POW_BASE_TARGET_STR)
+	genesis := NewBlock("", nil, target, COINBASE_AMT_ALLOWED)
 
-	for k, v := range starting_balances {
-		newBalance := BalanceType{Id: k, Balance: v}
-		(*newblock).Balances = append((*newblock).Balances, newBalance)
+	for client_address, client_balance := range starting_balances {
+		newBalance := BalanceType{Id: client_address, Balance: client_balance}
+		(*genesis).Balances = append((*genesis).Balances, newBalance)
 	}
 
-	return newblock, newconfig, nil
+	return genesis
 }

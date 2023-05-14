@@ -11,23 +11,23 @@ import (
 
 const DEFAULT_RSA_KEYLENGTH int = 2048
 
-func GenerateKeypair() (*rsa.PrivateKey, *rsa.PublicKey, error) {
+func GenerateKeypair() (*rsa.PrivateKey, *rsa.PublicKey) {
 	rng := rand.Reader
 	privKey, err := rsa.GenerateKey(rng, DEFAULT_RSA_KEYLENGTH)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil
 	}
 	pubKey := &(*privKey).PublicKey
-	return privKey, pubKey, nil
+	return privKey, pubKey
 }
 
-func GenerateAddress(pubKey *rsa.PublicKey) string {
+func CalcAddress(pubKey *rsa.PublicKey) string {
 	pubKeyBytes := sha256.Sum256([]byte(fmt.Sprintf("%x||%x", (*pubKey).N, (*pubKey).E)))
 	from := hex.EncodeToString(pubKeyBytes[:])
 	return from
 }
 
-func CalculateTarget(leading_zeros uint32, pow_base_target_string string) *big.Int {
+func CalcTarget(leading_zeros uint32, pow_base_target_string string) *big.Int {
 	target := big.NewInt(0)
 	target.SetString(pow_base_target_string, 16)
 	target.Rsh(target, uint(leading_zeros))
