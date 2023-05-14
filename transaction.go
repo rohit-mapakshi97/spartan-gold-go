@@ -27,9 +27,9 @@ type Output struct {
 type TransactionInfo struct {
 	From    string
 	Nonce   uint32
-	Pubkey  rsa.PublicKey //256 bits, 32 bytes
+	Pubkey  rsa.PublicKey
 	Fee     uint32
-	Outputs []Output // slice
+	Outputs []Output
 	Data    []byte
 }
 
